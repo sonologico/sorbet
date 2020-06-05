@@ -294,11 +294,17 @@ pair<ast::ParsedFile, vector<shared_ptr<core::File>>> indexOneWithPlugins(const 
 vector<ast::ParsedFile> incrementalResolve(core::GlobalState &gs, vector<ast::ParsedFile> what,
                                            const options::Options &opts) {
     try {
+#ifndef SORBET_REALMAIN_MIN
+        {
+            Timer timeit(gs.tracer(), "incremental_packager");
+            what = packager::Packager::runIncremental(gs, move(what));
+        }
+#endif
         {
             Timer timeit(gs.tracer(), "incremental_naming");
-            auto emptyWorkers = WorkerPool::create(0, gs.tracer());
             core::UnfreezeSymbolTable symbolTable(gs);
             core::UnfreezeNameTable nameTable(gs);
+            auto emptyWorkers = WorkerPool::create(0, gs.tracer());
 
             auto result = sorbet::namer::Namer::run(gs, move(what), *emptyWorkers);
             // Cancellation cannot occur during incremental namer.
@@ -737,6 +743,7 @@ vector<ast::ParsedFile> package(core::GlobalState &gs, vector<ast::ParsedFile> w
     return what;
 #else
     // TODO: Disable unless in stripe mode?
+    Timer timeit(gs.tracer(), "package");
     return packager::Packager::run(gs, workers, move(what));
 #endif
 }
@@ -854,6 +861,8 @@ ast::ParsedFile checkNoDefinitionsInsideProhibitedLines(core::GlobalState &gs, a
 ast::ParsedFilesOrCancelled resolve(unique_ptr<core::GlobalState> &gs, vector<ast::ParsedFile> what,
                                     const options::Options &opts, WorkerPool &workers, bool skipConfigatron) {
     try {
+        what = package(*gs, move(what), opts, workers);
+
         auto result = name(*gs, move(what), opts, workers, skipConfigatron);
         if (!result.hasResult()) {
             return result;
